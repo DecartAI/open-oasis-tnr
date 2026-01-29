@@ -11,9 +11,34 @@ from torch import nn
 from rotary_embedding_torch import RotaryEmbedding
 from einops import rearrange
 from attention import SpatialAxialAttention, TemporalAxialAttention
-from timm.models.vision_transformer import Mlp
-from timm.layers.helpers import to_2tuple
 import math
+
+
+def to_2tuple(x):
+    """Convert int to tuple (x, x) or pass through if already a tuple."""
+    if isinstance(x, (list, tuple)):
+        return tuple(x)
+    return (x, x)
+
+
+class Mlp(nn.Module):
+    """MLP feedforward block (replaces timm.models.vision_transformer.Mlp)."""
+    def __init__(self, in_features, hidden_features=None, out_features=None, act_layer=nn.GELU, drop=0.):
+        super().__init__()
+        out_features = out_features or in_features
+        hidden_features = hidden_features or in_features
+        self.fc1 = nn.Linear(in_features, hidden_features)
+        self.act = act_layer()
+        self.fc2 = nn.Linear(hidden_features, out_features)
+        self.drop = nn.Dropout(drop)
+
+    def forward(self, x):
+        x = self.fc1(x)
+        x = self.act(x)
+        x = self.drop(x)
+        x = self.fc2(x)
+        x = self.drop(x)
+        return x
 
 
 def modulate(x, shift, scale):
