@@ -6,7 +6,7 @@ References:
 import torch
 from dit import DiT_models
 from vae import VAE_models
-from torchvision.io import read_video, write_video
+import imageio.v3 as iio
 from utils import load_prompt, load_actions, sigmoid_beta_schedule
 from tqdm import tqdm
 from einops import rearrange
@@ -16,7 +16,7 @@ import argparse
 from pprint import pprint
 import os
 
-assert torch.neuronx.is_available()
+# assert torch.neuronx.is_available()
 device_type = "neuron"
 device = f"{device_type}:0"
 dtype = torch.bfloat16
@@ -24,7 +24,7 @@ dtype = torch.bfloat16
 
 def main(args):
     torch.manual_seed(0)
-    torch.neuronx.manual_seed(0)
+    # torch.neuronx.manual_seed(0)
 
     # load DiT checkpoint
     model = DiT_models["DiT-S/2"]()
@@ -34,7 +34,7 @@ def main(args):
         model.load_state_dict(ckpt, strict=False)
     elif args.oasis_ckpt.endswith(".safetensors"):
         load_model(model, args.oasis_ckpt)
-    model = model.to(device).eval()
+    model = model.to(device=device, dtype=dtype).eval()
 
     # load VAE checkpoint
     vae = VAE_models["vit-l-20-shallow-encoder"]()
@@ -44,7 +44,8 @@ def main(args):
         vae.load_state_dict(vae_ckpt)
     elif args.vae_ckpt.endswith(".safetensors"):
         load_model(vae, args.vae_ckpt)
-    vae = vae.to(device).eval()
+    vae = vae.to(device=device, dtype=dtype).eval()
+
 
     # sampling params
     n_prompt_frames = args.n_prompt_frames
@@ -65,26 +66,30 @@ def main(args):
     actions = load_actions(args.actions_path, action_offset=args.video_offset)[:, :total_frames]
 
     # sampling inputs
-    x = x.to(device)
-    actions = actions.to(device)
-
+    x = x.to(device=device, dtype=dtype)
+    actions = actions.to(device=device, dtype=dtype)
+    
+    print("loaded prompt and actions")
+    print(x.device)
+    print(actions.device)
+    # import ipdb; ipdb.set_trace()
     # vae encoding
     B = x.shape[0]
     H, W = x.shape[-2:]
     scaling_factor = 0.07843137255
     x = rearrange(x, "b t c h w -> (b t) c h w")
     with torch.no_grad():
-        with autocast(device_type, dtype=dtype):
-            x = vae.encode(x * 2 - 1).mean * scaling_factor
+        x = x.to(device=device, dtype=dtype)
+        x = vae.encode(x * 2 - 1).mean * scaling_factor
     x = rearrange(x, "(b t) (h w) c -> b t c h w", t=n_prompt_frames, h=H // vae.patch_size, w=W // vae.patch_size)
     x = x[:, :n_prompt_frames]
-
+    print("encoded prompt")
     # get alphas
     betas = sigmoid_beta_schedule(max_noise_level).float().to(device)
     alphas = 1.0 - betas
     alphas_cumprod = torch.cumprod(alphas, dim=0)
     alphas_cumprod = rearrange(alphas_cumprod, "T -> T 1 1 1")
-
+    print("got alphas")
     # sampling loop
     for i in tqdm(range(n_prompt_frames, total_frames)):
         chunk = torch.randn((B, 1, *x.shape[-3:]), device=device)
@@ -124,7 +129,7 @@ def main(args):
             x[:, -1:] = x_pred[:, -1:]
 
     # vae decoding
-    x = rearrange(x, "b t c h w -> (b t) (h w) c")
+    x = rearrange(x, "b t c h w -> (b t) (h w) c").contiguous()
     with torch.no_grad():
         x = (vae.decode(x / scaling_factor) + 1) / 2
     x = rearrange(x, "(b t) c h w -> b t h w c", t=total_frames)
@@ -132,7 +137,8 @@ def main(args):
     # save video
     x = torch.clamp(x, 0, 1)
     x = (x * 255).byte()
-    write_video(args.output_path, x[0].cpu(), fps=args.fps)
+    # x[0] is (T, H, W, C) - imageio expects (T, H, W, C) numpy array
+    iio.imwrite(args.output_path, x[0].cpu().numpy(), fps=args.fps, plugin="pyav")
     print(f"generation saved to {args.output_path}.")
 
 

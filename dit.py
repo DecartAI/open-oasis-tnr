@@ -5,7 +5,7 @@ References:
     - Latte: https://github.com/Vchitect/Latte/blob/main/models/latte.py
 """
 
-from typing import Optional, Literal
+from typing import Optional
 import torch
 from torch import nn
 from rotary_embedding_torch import RotaryEmbedding
@@ -203,12 +203,13 @@ class SpatioTemporalDiTBlock(nn.Module):
 
     def forward(self, x, c):
         B, T, H, W, D = x.shape
+        print("spatial block")
 
         # spatial block
         s_shift_msa, s_scale_msa, s_gate_msa, s_shift_mlp, s_scale_mlp, s_gate_mlp = self.s_adaLN_modulation(c).chunk(6, dim=-1)
         x = x + gate(self.s_attn(modulate(self.s_norm1(x), s_shift_msa, s_scale_msa)), s_gate_msa)
         x = x + gate(self.s_mlp(modulate(self.s_norm2(x), s_shift_mlp, s_scale_mlp)), s_gate_mlp)
-
+        print("temporal block")
         # temporal block
         t_shift_msa, t_scale_msa, t_gate_msa, t_shift_mlp, t_scale_mlp, t_gate_mlp = self.t_adaLN_modulation(c).chunk(6, dim=-1)
         x = x + gate(self.t_attn(modulate(self.t_norm1(x), t_shift_msa, t_scale_msa)), t_gate_msa)

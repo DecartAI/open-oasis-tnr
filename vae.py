@@ -4,10 +4,7 @@ References:
     - MAE: https://github.com/facebookresearch/mae
 """
 
-import numpy as np
-import math
 import functools
-from collections import namedtuple
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -67,11 +64,12 @@ class Attention(nn.Module):
         self.register_buffer("rotary_freqs", rotary_freqs, persistent=False)
 
     def forward(self, x):
+        # import ipdb; ipdb.set_trace()
         B, N, C = x.shape
         assert N == self.frame_height * self.frame_width
-
+        print("qkv")
         q, k, v = self.qkv(x).chunk(3, dim=-1)
-
+        print("rearranged")
         q = rearrange(
             q,
             "b (H W) (h d) -> b h H W d",
@@ -139,8 +137,11 @@ class AttentionBlock(nn.Module):
         )
 
     def forward(self, x):
+        print("attention block")
         x = x + self.attn(self.norm1(x))
+        print("mlp block")
         x = x + self.mlp(self.norm2(x))
+        print("attention block done")
         return x
 
 
@@ -282,6 +283,7 @@ class AutoencoderKL(nn.Module):
 
         # encoder
         for blk in self.encoder:
+            print("encoding block")
             x = blk(x)
         x = self.enc_norm(x)
 

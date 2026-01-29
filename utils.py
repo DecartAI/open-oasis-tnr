@@ -3,11 +3,11 @@ Adapted from https://github.com/buoyancy99/diffusion-forcing/blob/main/algorithm
 Action format derived from VPT https://github.com/openai/Video-Pre-Training
 """
 
-import math
 import torch
-from torch import nn
-from torchvision.io import read_image, read_video
-from torchvision.transforms.functional import resize
+import torch.nn.functional as F
+from PIL import Image
+import imageio.v3 as iio
+import numpy as np
 from einops import rearrange
 from typing import Mapping, Sequence
 
@@ -88,18 +88,21 @@ VIDEO_EXTENSIONS = {"mp4"}
 def load_prompt(path, video_offset=None, n_prompt_frames=1):
     if path.lower().split(".")[-1] in IMAGE_EXTENSIONS:
         print("prompt is image; ignoring video_offset and n_prompt_frames")
-        prompt = read_image(path)
+        img = Image.open(path).convert("RGB")
+        prompt = torch.from_numpy(np.array(img)).permute(2, 0, 1)  # HWC -> CHW
         # add frame dimension
         prompt = rearrange(prompt, "c h w -> 1 c h w")
     elif path.lower().split(".")[-1] in VIDEO_EXTENSIONS:
-        prompt = read_video(path, pts_unit="sec")[0]
+        frames = iio.imread(path, plugin="pyav")  # returns (T, H, W, C)
+        prompt = torch.from_numpy(frames).permute(0, 3, 1, 2)  # THWC -> TCHW
         if video_offset is not None:
             prompt = prompt[video_offset:]
         prompt = prompt[:n_prompt_frames]
     else:
         raise ValueError(f"unrecognized prompt file extension; expected one in {IMAGE_EXTENSIONS} or {VIDEO_EXTENSIONS}")
     assert prompt.shape[0] == n_prompt_frames, f"input prompt {path} had less than n_prompt_frames={n_prompt_frames} frames"
-    prompt = resize(prompt, (360, 640))
+    # resize using torch interpolate: (T, C, H, W) -> (T, C, 360, 640)
+    prompt = F.interpolate(prompt.float(), size=(360, 640), mode="bilinear", align_corners=False).to(prompt.dtype)
     # add batch dimension
     prompt = rearrange(prompt, "t c h w -> 1 t c h w")
     prompt = prompt.float() / 255.0
